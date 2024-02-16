@@ -1,116 +1,175 @@
+#include <Wire.h>
 #include <SPI.h>
 #include <SD.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 
-//serial monitor print while writing log
-boolean serialPrint = true;//true or false
-char *logFile ="datalog.txt";//file name. must be max 8 character excluding the extension (book.txt is 4 char)
-int readPushButtonPin = 9;
+#define SCREEN_WIDTH 128 
+#define SCREEN_HEIGHT 64 
+ 
+#define OLED_RESET   -1 
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+boolean serialPrint = true; 
+char *logFile = "datalog.txt"; 
+ 
+float Current_Value = 0;
+const int ACPin = A0;         
+int adc_max = 0;    
+int adc_min = 1023; 
+long tiempo_init; 
 
 File myFile;
-void writeLog(float);//prototype of writLog funciton at the bottom of this code
-void readLog(void);//prototype of readLog funciton at the bottom of this code
 
 void setup() {
+  Serial.begin(9600);
+  delay(2000); // Added delay for serial monitor to initialize
 
-    //Watch the instruction to this code on youTube https://youtu.be/TduSOX6CMr4
-    // Open serial communications and wait for port to open:
-    Serial.begin(9600);
+  // Initialize OLED display
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for (;;);
+  }
 
-    while (!Serial) {
-        ; // wait for serial port to connect. Needed for native USB port only
-    }
+  tiempo_init = millis(); 
 
-    pinMode(readPushButtonPin, INPUT_PULLUP);
+  display.clearDisplay();
+  display.setTextColor(WHITE);
+  display.display(); // Make sure to display content after clearing
 
-    Serial.print("Initializing SD card...");
+  Serial.print("Initializing SD card...");
 
-    if (!SD.begin(4)) {
-        Serial.println("initialization failed!");
-        while (1);
-    }
+  if (!SD.begin(4)) {
+    Serial.println("initialization failed!");
+    while (1);
+  }
 
-    Serial.println("initialization done.");
-    SD.remove(logFile);
+  Serial.println("initialization done.");
 
-    // open the file. note that only one file can be open at a time,
-    // so you have to close this one before opening another.
+  SD.remove(logFile);
 
-    myFile = SD.open(logFile, FILE_WRITE);
+  myFile = SD.open(logFile, FILE_WRITE);
 
-    if (!myFile) {
-        Serial.println("log file missing");
-        while(1);
-    }
+  if (!myFile) {
+    Serial.println("log file missing");
+    while(1);
+  }
 }
 
 void loop() {
-    int sensor = analogRead(A0);//read A0 pin
+  int sensorValue = analogRead(A1); 
+  float current = 0;
+  float current_value = readACCurrentValue();
 
-    //convert value of 0 to 1023 to voltage. 
-    //Arduino UNO is 5V so we use 5.0
-    float voltage = sensor * (5.0 / 1023.0); //5.0 it depend in your input value
+  if ((millis() - tiempo_init) > 500) { 
+    adc_max = 0;     
+    adc_min = 1023;  
+    tiempo_init = millis(); 
+  }
 
-    if(digitalRead(readPushButtonPin) == LOW)
-    {
-        delay(100);//
-        readLog();
-    }
+  if (sensorValue > adc_max) {
+    adc_max = sensorValue; 
+  } else if (sensorValue < adc_min) {
+    adc_min = sensorValue; 
+  }
 
-    writeLog(voltage);   
-        //Watch the instruction to this code on youTube https://youtu.be/TduSOX6CMr4
-    }
+  Serial.print(current_value);
+  Serial.println(" A");
 
-void writeLog(float voltage)
-{
-    myFile = SD.open(logFile, FILE_WRITE);
-    myFile.print("Time: ");//writing the text: Time:
-    myFile.print(millis()/1000); //recod time  
-    myFile.print("\tVoltage: ");//writing the text Volage after a tab 	
-    myFile.print(voltage);//Writing voltage
-    myFile.println("V");//adding V at the end
-    
-    if(serialPrint) {
-        Serial.print ("Time:");
-        Serial.print(millis()/1000);  
-        Serial.print ("	Voltage: ");
-        Serial.print(voltage);       
-    } 
+  current += current_value;
+  
+  writeLog(adc_max, current); 
 
-    // close the file:
-    myFile.close();
-    
-    if(serialPrint){
-        Serial.println(" done.");
-    }
+  delay(1000);
+
+  Serial.print(current);
+  Serial.println("Current: ");
+  display.clearDisplay();
+
+  display.setTextSize(1);
+  display.setCursor(0,0);
+  display.print("Current: ");
+  display.print(current);
+
+  display.setTextSize(1);
+  display.setCursor(0, 8);
+  display.print("Voltage: ");
+  display.print(adc_max);
+
+  display.display(); 
 }
 
-/*
-* readLog
-* Reads the datas from MicroSD Card and prints it on serial monitor
-*/
-void readLog()
-{
+float readACCurrentValue() {
+  float ACCurrtntValue = 0;
+  float peakVoltage = 0;
+  float voltageVirtualValue = 0; 
 
-    // re-open the file for reading:
-    myFile = SD.open(logFile);
+  for (int i = 0; i < 5; i++) {
+    peakVoltage += analogRead(ACPin);  
+    delay(1);
+  }
 
-    if (myFile) {
-        Serial.print("Reading ========");
-        Serial.println(logFile);
-        
-        // read from the file until there's nothing else in it:
-        while (myFile.available()) {
-            Serial.write(myFile.read());
-        }
+  peakVoltage = peakVoltage / 5;
+  voltageVirtualValue = peakVoltage * 0.707; 
 
-        Serial.print("Reading END ==========");
+  voltageVirtualValue = (voltageVirtualValue / 1024 * VREF ) / 2;
+  ACCurrtntValue = voltageVirtualValue * ACTectionRange;
 
-        // close the file:
-        myFile.close();
-        
-    } else {
-        // if the file didn't open, print an error:
-        Serial.print("readLog() error opening ");
-        Serial.println(logFile);
-    }  
+  return ACCurrtntValue;
+}
+
+void writeLog(float voltage, float current) {
+  myFile = SD.open(logFile, FILE_WRITE);
+  if (!myFile) {
+    Serial.println("Error opening log file!");
+    return;
+  }
+  
+  myFile.print("Time: ");
+  myFile.print(millis()/1000); 
+
+  myFile.print("\tVoltage: ");
+  myFile.print(voltage);
+  myFile.println("V");
+
+  myFile.print("\tCurrent: ");
+  myFile.print(current);
+  myFile.println("amps");
+  
+  if (serialPrint) {
+    Serial.print ("Time:");
+    Serial.print(millis()/1000);  
+    Serial.print (" Voltage: ");
+    Serial.print(voltage);       
+    Serial.print (" Current: ");
+    Serial.print(current);  
+  } 
+
+  myFile.close();
+  
+  if (serialPrint) {
+    Serial.println(" done.");
+  }
+}
+
+void readLog() {
+  myFile = SD.open(logFile);
+
+  if (myFile) {
+    Serial.print("Reading ========");
+    Serial.println(logFile);
+    
+    while (myFile.available()) {
+      Serial.write(myFile.read());
+    }
+
+    Serial.print("Reading END ==========");
+
+    myFile.close();
+      
+  } else {
+
+    Serial.print("readLog() error opening ");
+    Serial.println(logFile);
+  }  
 }
