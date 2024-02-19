@@ -1,96 +1,106 @@
 #include <Wire.h>
+#include <SD.h>
 #include <SSD1306Ascii.h>
 #include <SSD1306AsciiWire.h>
-#include <SPI.h>
-#include <SD.h>
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
-#define I2C_ADDRESS 0x3C
+#define I2C_ADDRESS 0x3C 
 
 SSD1306AsciiWire oled;
 
 const int ACPin = A0;
-const int chipSelect = 10;
+const float VREF = 5.0; // Reference voltage
+const float ACTectionRange = 30.0; // Range of current sensor
+float adc_max = 0;
 
-boolean serialPrint = true;
-char *logFile = "datalog.txt";
-
-float Current_Value = 0;
-int adc_max = 0;
-long tiempo_init;
+boolean serialPrint = true; 
+char *logFile = "datalog.txt"; 
 
 File myFile;
 
 void setup() {
     Serial.begin(9600);
     Wire.begin();
-    oled.begin(&Adafruit128x64, I2C_ADDRESS);
+    oled.begin(&Adafruit128x64, I2C_ADDRESS); // Initialize OLED display
 
-    if (!SD.begin(chipSelect)) {
-        Serial.println("initialization failed!");
+    if (!SD.begin()) { // Initialize SD card
+        Serial.println("SD initialization failed!");
         return;
     }
-    Serial.println("initialization done.");
-
+    Serial.println("SD initialization done.");
     SD.remove(logFile);
 
-    myFile = SD.open(logFile, FILE_WRITE);
-
+    myFile = SD.open(logFile, FILE_WRITE); 
     if (!myFile) {
-        Serial.println("log file missing");
-        while(1);
+        Serial.println("Error opening log file!");
+        while (1);
     }
-
-    tiempo_init = millis();
-
-    delay(2000);
+    myFile.close();
+    pinMode(ACPin, INPUT);
     oled.clear();
 }
 
 void loop() {
-    int sensorValue = analogRead(ACPin);
-    float current_value = readACCurrentValue();
+    float current_value = readACCurrentValue(); // Read current value
 
-    if ((millis() - tiempo_init) > 500) {
-        adc_max = 0;
-        tiempo_init = millis();
+    // Update max ADC value
+    if (current_value > adc_max) {
+        adc_max = current_value; 
     }
 
-    if (sensorValue > adc_max) {
-        adc_max = sensorValue;
-    }
+    Serial.print(current_value);
+    Serial.println(" A");
 
-    writeLog(adc_max, current_value);
-
-    delay(1000);
-
+    // Display current value on OLED
     oled.clear();
+    oled.setFont(System5x7);
     oled.println("Current:");
-    oled.println(current_value, 3);
+    oled.print(current_value);
     oled.println("A");
-    oled.println("Voltage:");
-    oled.println(adc_max);
-    oled.display();
+
+    // Write data to SD card
+    myFile = SD.open(logFile, FILE_WRITE);
+    if (myFile) {
+        myFile.print("Current: ");
+        myFile.print(current_value);
+        myFile.println("A");
+        myFile.close();
+    } else {
+        Serial.println("Error opening log file for writing");
+    }
+
+    // Display data from SD card
+    myFile = SD.open(logFile);
+    if (myFile) {
+        Serial.println("Log file contents:");
+        while (myFile.available()) {
+            Serial.write(myFile.read());
+        }
+        myFile.close();
+    } else {
+        Serial.println("Error opening log file for reading");
+    }
+
+    delay(5000); // Delay between readings
 }
 
 float readACCurrentValue() {
-    float ACCurrentValue = 0;
     float peakVoltage = 0;
-    float voltageVirtualValue = 0;
+    float voltageVirtualValue = 0; 
 
     for (int i = 0; i < 5; i++) {
-        peakVoltage += analogRead(ACPin);
+        peakVoltage += analogRead(ACPin);  
         delay(1);
     }
 
     peakVoltage = peakVoltage / 5;
-    voltageVirtualValue = peakVoltage * 0.707;
+    voltageVirtualValue = peakVoltage * 0.707; 
 
     voltageVirtualValue = (voltageVirtualValue / 1024 * VREF ) / 2;
-    ACCurrentValue = voltageVirtualValue * ACTectionRange;
+    float current_value = voltageVirtualValue * ACTectionRange;
 
-    return ACCurrentValue;
+    return current_value;
 }
 
 void writeLog(float voltage, float current) {
