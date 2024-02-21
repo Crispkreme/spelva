@@ -77,8 +77,6 @@ void loop() {
     // Write data to SD card
     myFile = SD.open(logFile, FILE_WRITE);
     if (myFile) {
-        myFile.println("ELECTRIC SUPPLY MONITORING");
-        myFile.println("_______________________________");
         myFile.println("CURRENT: " + String(current_value) + " A");
         myFile.println("VOLTAGE:  " + String(adc_max) + " V");
         myFile.close();
