@@ -13,6 +13,9 @@ const int ACPin = A0;
 const float VREF = 5.0; // Reference voltage
 const float ACTectionRange = 30.0; // Range of current sensor
 float adc_max = 0;
+float adc_min = 1023; 
+float current_Value = 0;   
+long tiempo_init; 
 
 boolean serialPrint = true; 
 char *logFile = "datalog.txt"; 
@@ -23,6 +26,8 @@ void setup() {
     Serial.begin(9600);
     Wire.begin();
     oled.begin(&Adafruit128x64, I2C_ADDRESS); // Initialize OLED display
+
+    tiempo_init = millis(); 
 
     if (!SD.begin()) { // Initialize SD card
         Serial.println("SD initialization failed!");
@@ -42,7 +47,16 @@ void setup() {
 }
 
 void loop() {
-    float current_value = readACCurrentValue(); // Read current value
+
+    int sensorValue = analogRead(A1); 
+    float current = 0;
+    float current_value = readACCurrentValue();
+
+    if ((millis() - tiempo_init) > 500) { 
+        adc_max = 0;     
+        adc_min = 1023;  
+        tiempo_init = millis(); 
+    }
 
     // Update max ADC value
     if (current_value > adc_max) {
@@ -59,12 +73,21 @@ void loop() {
     oled.print(current_value);
     oled.println("A");
 
+    oled.setFont(System5x7);
+    oled.println("Voltage:");
+    oled.print(adc_max);
+    oled.println("V");
+
     // Write data to SD card
     myFile = SD.open(logFile, FILE_WRITE);
     if (myFile) {
         myFile.print("Current: ");
         myFile.print(current_value);
         myFile.println("A");
+
+        myFile.print("Voltage: ");
+        myFile.print(adc_max);
+        myFile.println("V");
         myFile.close();
     } else {
         Serial.println("Error opening log file for writing");
@@ -101,32 +124,4 @@ float readACCurrentValue() {
     float current_value = voltageVirtualValue * ACTectionRange;
 
     return current_value;
-}
-
-void writeLog(float voltage, float current) {
-    myFile = SD.open(logFile, FILE_WRITE);
-    if (!myFile) {
-        Serial.println("Error opening log file!");
-        return;
-    }
-
-    myFile.print("Time: ");
-    myFile.print(millis()/1000);
-    myFile.print("\tVoltage: ");
-    myFile.print(voltage);
-    myFile.println("V");
-    myFile.print("\tCurrent: ");
-    myFile.print(current);
-    myFile.println("amps");
-
-    if (serialPrint) {
-        Serial.print("Time:");
-        Serial.print(millis()/1000);
-        Serial.print(" Voltage: ");
-        Serial.print(voltage);
-        Serial.print(" Current: ");
-        Serial.println(current);
-    }
-
-    myFile.close();
 }
