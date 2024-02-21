@@ -48,7 +48,7 @@ void setup() {
 
 void loop() {
 
-    int sensorValue = analogRead(A1); 
+    int sensorValue = analogRead(ACPin); 
     float current = 0;
     float current_value = readACCurrentValue();
 
@@ -69,40 +69,21 @@ void loop() {
     // Display current value on OLED
     oled.clear();
     oled.setFont(System5x7);
-    oled.println("Current:");
-    oled.print(current_value);
-    oled.println("A");
-
-    oled.setFont(System5x7);
-    oled.println("Voltage:");
-    oled.print(adc_max);
-    oled.println("V");
+    oled.println("ELECTRIC SUPPLY MONITORING");
+    oled.println("_______________________________");
+    oled.println("CURRENT: " + String(current_value) + " A");
+    oled.println("VOLTAGE:  " + String(adc_max) + " V");
 
     // Write data to SD card
     myFile = SD.open(logFile, FILE_WRITE);
     if (myFile) {
-        myFile.print("Current: ");
-        myFile.print(current_value);
-        myFile.println("A");
-
-        myFile.print("Voltage: ");
-        myFile.print(adc_max);
-        myFile.println("V");
+        myFile.println("ELECTRIC SUPPLY MONITORING");
+        myFile.println("_______________________________");
+        myFile.println("CURRENT: " + String(current_value) + " A");
+        myFile.println("VOLTAGE:  " + String(adc_max) + " V");
         myFile.close();
     } else {
         Serial.println("Error opening log file for writing");
-    }
-
-    // Display data from SD card
-    myFile = SD.open(logFile);
-    if (myFile) {
-        Serial.println("Log file contents:");
-        while (myFile.available()) {
-            Serial.write(myFile.read());
-        }
-        myFile.close();
-    } else {
-        Serial.println("Error opening log file for reading");
     }
 
     delay(5000); // Delay between readings
