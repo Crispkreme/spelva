@@ -1,106 +1,136 @@
+#include <SPI.h> 
+#include <RTClib.h>
 #include <Wire.h>
+#include <ZMPT101B.h>
 #include <SD.h>
-#include <SSD1306Ascii.h>
-#include <SSD1306AsciiWire.h>
+#include "HD44780_LCD_PCF8574.h"
 
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-#define I2C_ADDRESS 0x3C 
+#define DISPLAY_DELAY_INIT 50
+#define SENSITIVITY 500.0f
+#define ACTectionRange 20
+#define VREF 5
 
-SSD1306AsciiWire oled;
+HD44780LCD myLCD(4, 16, 0x27, &Wire);
+ZMPT101B voltageSensor(A0, 50.0);
+RTC_DS1307 rtc;
 
-const int ACPin = A0;
-const float VREF = 5.0; // Reference voltage
-const float ACTectionRange = 30.0; // Range of current sensor
-float adc_max = 0;
-float adc_min = 1023; 
-float current_Value = 0;   
-long tiempo_init; 
+float correctionfactor = -10;
+float Current_Value = 0;
+float peakVoltage = 0;
+float voltageVirtualValue = 0;
+float Wh = 0;
+const int ACPin = A1;
 
-boolean serialPrint = true; 
-char *logFile = "datalog.txt"; 
+char watt[5];
+char buf1[20];
+
+unsigned long last_time = 0;
+unsigned long current_time = 0;
 
 File myFile;
 
 void setup() {
-    Serial.begin(9600);
-    Wire.begin();
-    oled.begin(&Adafruit128x64, I2C_ADDRESS); // Initialize OLED display
+  Serial.begin(9600);
 
-    tiempo_init = millis(); 
+  rtc.begin();
 
-    if (!SD.begin()) { // Initialize SD card
-        Serial.println("SD initialization failed!");
-        return;
-    }
-    Serial.println("SD initialization done.");
-    SD.remove(logFile);
+  voltageSensor.setSensitivity(SENSITIVITY);
 
-    myFile = SD.open(logFile, FILE_WRITE); 
-    if (!myFile) {
-        Serial.println("Error opening log file!");
-        while (1);
-    }
-    myFile.close();
-    pinMode(ACPin, INPUT);
-    oled.clear();
+  while (!Serial);
+
+  pinMode(ACPin, INPUT);
+
+  delay(DISPLAY_DELAY_INIT);
+  myLCD.PCF8574_LCDInit(myLCD.LCDCursorTypeOn);
+  myLCD.PCF8574_LCDClearScreen();
+  myLCD.PCF8574_LCDBackLightSet(true);
+  myLCD.PCF8574_LCDGOTO(myLCD.LCDLineNumberOne, 0);
 }
 
 void loop() {
 
-    int sensorValue = analogRead(ACPin); 
-    float current = 0;
-    float current_value = readACCurrentValue();
+  float ACcurrent = readACCurrentValue();
+  float acvoltage = voltageSensor.getRmsVoltage();
+  float P = acvoltage * ACcurrent;
 
-    if ((millis() - tiempo_init) > 500) { 
-        adc_max = 0;     
-        adc_min = 1023;  
-        tiempo_init = millis(); 
-    }
+  DateTime now = rtc.now();
 
-    // Update max ADC value
-    if (current_value > adc_max) {
-        adc_max = current_value; 
-    }
+  sprintf(buf1, "%02d:%02d:%02d %02d/%02d/%02d",  now.hour(), now.minute(), now.second(), now.day(), now.month(), now.year());  
 
-    Serial.print(current_value);
-    Serial.println(" A");
+  last_time = current_time;
+  current_time = millis();
+  Wh = Wh + P * ((current_time - last_time) / 3600000.0);
+  dtostrf(Wh, 4, 2, watt);
 
-    // Display current value on OLED
-    oled.clear();
-    oled.setFont(System5x7);
-    oled.println("ELECTRIC SUPPLY MONITORING");
-    oled.println("_______________________________");
-    oled.println("CURRENT: " + String(current_value) + " A");
-    oled.println("VOLTAGE:  " + String(adc_max) + " V");
+  String titleString = "SPELVA";
+  String datetimeString = "Date/Time: " + String(buf1);
+  String voltageString = "Voltage: " + String(acvoltage) + " V";
+  String currentString = "Current: " + String(ACcurrent) + " A";
 
-    // Write data to SD card
-    myFile = SD.open(logFile, FILE_WRITE);
-    if (myFile) {
-        myFile.println("CURRENT: " + String(current_value) + " A");
-        myFile.println("VOLTAGE:  " + String(adc_max) + " V");
-        myFile.close();
-    } else {
-        Serial.println("Error opening log file for writing");
-    }
+  myLCD.PCF8574_LCDGOTO(myLCD.LCDLineNumberOne, 0);
+  myLCD.PCF8574_LCDSendString(titleString.c_str());
+  myLCD.PCF8574_LCDSendChar(' ');
 
-    delay(5000); // Delay between readings
+  myLCD.PCF8574_LCDGOTO(myLCD.LCDLineNumberTwo, 0);
+  myLCD.PCF8574_LCDSendString(datetimeString.c_str());
+  myLCD.PCF8574_LCDSendChar(' ');
+
+  myLCD.PCF8574_LCDGOTO(myLCD.LCDLineNumberThree, 4);
+  myLCD.PCF8574_LCDSendString(voltageString.c_str());
+  myLCD.PCF8574_LCDSendChar(' ');
+
+  myLCD.PCF8574_LCDGOTO(myLCD.LCDLineNumberFour, 4);
+  myLCD.PCF8574_LCDSendString(currentString.c_str());
+  myLCD.PCF8574_LCDSendChar(' ');
+
+  Serial.println("Voltage: " + String(acvoltage));
+  Serial.println("Current: " + String(ACcurrent));
+
+  writeToFile(acvoltage, ACcurrent, datetimeString);
+  delay(1000);
 }
 
 float readACCurrentValue() {
-    float peakVoltage = 0;
-    float voltageVirtualValue = 0; 
+  float ACCurrtntValue = 0;
+  float peakVoltage = 0;
+  float voltageVirtualValue = 0; //Vrms
+  for (int i = 0; i < 5; i++) {
+    peakVoltage += analogRead(ACPin); //read peak voltage
+    peakVoltage = peakVoltage + correctionfactor;
+    delay(1);
+  }
+  peakVoltage = peakVoltage / 5;
+  voltageVirtualValue = peakVoltage * 0.707; //change the peak voltage to the Virtual Value of voltage
 
-    for (int i = 0; i < 5; i++) {
-        peakVoltage += analogRead(ACPin);  
-        delay(1);
-    }
+  /*The circuit is amplified by 2 times, so it is divided by 2.*/
+  voltageVirtualValue = (voltageVirtualValue / 1024 * VREF) / 2;
+  ACCurrtntValue = voltageVirtualValue * ACTectionRange;
 
-    peakVoltage = peakVoltage / 5;
-    voltageVirtualValue = peakVoltage * 0.707; 
+  Serial.println("Vm: " + String(peakVoltage));
+  Serial.println("Vrms: " + String(voltageVirtualValue));
 
-    voltageVirtualValue = (voltageVirtualValue / 1024 * VREF ) / 2;
-    float current_value = voltageVirtualValue * ACTectionRange;
+  return ACCurrtntValue;
+}
+  
+void writeToFile(float acvoltage, float ACcurrent, String datetimeString) {
+  Serial.print("Initializing SD card...");
 
-    return current_value;
+  if (!SD.begin(4)) {
+    Serial.println("Initialization failed!");
+    while (true);
+  }
+
+  myFile = SD.open("test.txt", FILE_WRITE);
+
+  if (myFile) {
+    myFile.println("=========== SPELVA DATA ============");
+    myFile.println(String(datetimeString));
+    myFile.println("Voltage: " + String(acvoltage) + " V");
+    myFile.println("Current: " + String(ACcurrent) + " C");
+    myFile.println(" ");
+    myFile.close();
+    Serial.println("Data written to file.");
+  } else {
+    Serial.println("Error opening file");
+  }
 }
